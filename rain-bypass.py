@@ -29,6 +29,7 @@
 # sudo apt install python3
 # sudo apt install python3-pip
 # sudo apt install python3-pil
+# sudo apt install screen
 # sudo pip3 install --upgrade setuptools
 # sudo pip3 install adafruit-blinka
 # sudo pip3 install adafruit-circuitpython-ssd1306
