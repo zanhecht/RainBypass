@@ -3,25 +3,50 @@
 
 # Based on rain-bypass.py from https://www.thirdeyevis.com/pi-page-3.php
 #
-# To run automatically at startup, change permission of this file to execute.
-# If using wireless for network adapter, make sure wireless settings are
-# configured correctly in wlan config so wifi device is available on startup.
-# Edit cron file using "crontab -e" and add
+# To set-up for the first time, after flashing Raspberry Pi OS to an SD Card:
+# 1. Create a blank file on the "boot" partition of the SD card called "ssh"
+# 2. Edit cmdline.txt on the boot partition to add the following to the end of the first line:
+#    consoleblank=0
+# 3. Edit config.txt on the boot partition and uncomment the following line:
+#     dtparam=i2c_arm=on
+# and add the following line below it:
+#     dtparam=i2c_baudrate=1000000
+# 4. Create a file on the "boot" partition called wpi-supplicant.conf with the follwing:
 #
-# @reboot sleep 60 && /usr/bin/screen -d -m /home/pi/python/rain-bypass-2.py
+# country=XX # Your 2-digit country code (e.g. US)
+# ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+# network={
+#     ssid="WiFiNetworkName"
+#     psk="WiFiPassword"
+# }
+#
+# 5. Boot up the device and connect via SSH.
+# 6. Run "sudo raspi-config" and enable i2c under "Interface Options"
+# 7. Run the following:
+#su
+# sudo apt-get update
+# sudo apt-get full-upgrade
+# sudo apt install python3
+# sudo apt install python3-pip
+# sudo apt install python3-pil
+# sudo pip3 install --upgrade setuptools
+# sudo pip3 install adafruit-blinka
+# sudo pip3 install adafruit-circuitpython-ssd1306
+# sudo reboot
+#
+# 8. To run automatically at startup, change permission of this file to execute:
+# sudo chmod +x rain-bypass.py
+# 9.Edit cron file using "crontab -e" and add
+# @reboot sleep 60 && /usr/bin/screen -d -m /home/pi/python/rain-bypass.py
 #
 # This will start the script 60 seconds after boot. The script output can be
 # accessed via terminal or SSH by typing "screen -r". If you wish to connect
-# remotely, make sure to disable power saving by adding the following to
+# remotely, and are using the desktop version of Raspberry Pi OS, make sure to
+# disable power saving by adding the following to
 # /etc/xdg/lxsession/LXDE-pi/autostart
 #
 # @xset s off
 # @xset -dpms
-#
-# Also, from the NOOBS Recovery Console (press SHIFT during boot), use the
-# Configuration Editor to add the following to cmdline.txt (after rootwait):
-#
-# consoleblank=0
 #
 # To do:
 # # Debounce valve sensor input
@@ -37,22 +62,25 @@ class Pins:
     ClosedSensor = 23   # Valve closed when 0
     OpenSensor = 24     # Valve open when 0
     
-    BypassEnable = 0    # Force enable watering
-    BypassDisable = 0   # Force disable watering
+    BypassEnable = 0    # Force enable watering (not implemented)
+    BypassDisable = 0   # Force disable watering (not implemented)
 
 import urllib.request
+import subprocess
 import socket
 import json 
 import os
 import time
+from signal import signal, SIGINT
+from sys import exit
 try:
     import xml.etree.cElementTree as ET
 except ImportError:
     import xml.etree.ElementTree as ET
 try:
     import RPi.GPIO as GPIO #Import GPIO library
-except:
-    pass
+except Exception as error:
+    print(error)
 
 # imports for piOLED screen
 try:
@@ -60,17 +88,19 @@ try:
     import busio
     import adafruit_ssd1306
     from PIL import Image, ImageDraw, ImageFont
-except:
-    pass
+except Exception as error:
+    print(error)
+
 
 config = {}             # Hold configuration
 display = [None, "","","","", None, None, None] # Hold display output
-    
+firstRun = True
+
 def runSetup():
     global config
     global display
-    display[1] = "## Rain Bypass 2.0 ##"
-    print(display[1])
+    display[2] = "## Rain Bypass 3.0 ##"
+    print(display[2])
 
     # Setup screen
     try:
@@ -107,19 +137,21 @@ def runSetup():
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.connect(("pool.ntp.org", 123))
             isConnected = True
-            display[2] = "Connected to network"
-            print(display[2])
+            display[1] = "IP: %s" % getIP()
+            print(display[1])
             updateOLED()
         except:
             print("Cannot reach pool.ntp.org. Waiting 30 seconds...")
-            display[2] = "Not connected..."
+            display[1] = "Not connected..."
             updateOLED()
             time.sleep(30)
 
+    now, waitTime = time.time(), 0
     # Load values from config file, or create it and get values
     try: # see if config file exists
         loadConfig()
-        now = time.time()
+        PrintConfig()
+        
         #config["time"] = (now - config["checkIncrement"]) #uncomment for debugging
         elapsedTime = int(now) - config["time"]
         waitTime = config["checkIncrement"] - (elapsedTime % config["checkIncrement"])
@@ -129,23 +161,25 @@ def runSetup():
         timeLeft = now + waitTime - time.time()
         display[4] = "Waiting %i:%02i mins" % ((timeLeft/60), (timeLeft%60))
         print(display[4])
-        
-        while time.time() < (now + waitTime):
-            updateOLED()
-            time.sleep(0.1)
-            timeLeft = now + waitTime - time.time()
-            display[4] = "Waiting %i:%02i mins" % ((timeLeft/60), (timeLeft%60))
-        display[4] = ""
-    except: # Exception: config file does not exist, create new
+    except Exception as configError: # Exception: config file does not exist, create new
+        print("Error loading value from config file: %s" % configError)
         display[3] = "INVALID CONFIG"
         display[4] = "RUN SETUP"
         updateOLED()
         buildConfig()
         display[3] = ""
         display[4] = ""
-
+        
+    while time.time() < (now + waitTime):
+        updateOLED()
+        time.sleep(0.1)
+        timeLeft = now + waitTime - time.time()
+        display[4] = "Waiting %i:%02i mins" % ((timeLeft/60), (timeLeft%60))
+    
+    display[4] = ""
     updateOLED()
 
+def PrintConfig():
     # Show values/interval used to check weather
     print("Checking forecast for point: %s, %s" % (config['latValue'], config['longValue']))
     print("System will look for rain %s hours ahead and %s hours behind the current time."
@@ -155,10 +189,12 @@ def runSetup():
     print("System will wait %s seconds (%.1f minute(s) or %.1f hour(s)) between checks." %
         (config['checkIncrement'], (float(config['checkIncrement']) / 60),
         (float(config['checkIncrement']) / 3600)) )
-
+    print("Valve has position sensor: %s. Always attempt to move valve: %s." % (config["valveHasSensor"], config["forceValve"]) )
+    
 def CheckWeather():
     global config
     global display
+    global firstRun
     
     display[4] = "Starting..."
     updateOLED()
@@ -177,7 +213,7 @@ def CheckWeather():
                 request = "https://forecast.weather.gov/MapClick.php?lat=" + str(config["latValue"]) + \
                           "&lon=" + str(config["longValue"]) + "&FcstType=digitalDWML"
                 print("Loading %s ... " % request, end = '')
-
+                
                 display[4] = "Fetching forecast..."
                 updateOLED()
 
@@ -191,6 +227,7 @@ def CheckWeather():
                 # Parse XML into array with only precipitation values (in in/hr)
                 for child in responseTree.getroot().find('.//hourly-qpf'):
                     qpf.append(float(child.text))
+                    
 
                 print("Calculating rainfall totals...")
                 display[4] = "Calculating..."
@@ -198,7 +235,6 @@ def CheckWeather():
                 if len(qpf) >= config["lookAhead"]: # Make sure we actually gathered data
                     # Process forecast data
                     rainForecasted = processForecast(qpf)
-                    display[2] = "Download OK"
                 else:
                     print("Forecast too short.")
                     display[2] = "Forecast too short"
@@ -210,16 +246,19 @@ def CheckWeather():
                 # Turn off flashing red data error light if flashing, routine successful
                 try:
                     GPIO.output(Pins.DataErrLED, False)
-                except:
-                    pass
+                except Exception as error:
+                    print(error)
+                    
+                display[1] = "IP: %s" % getIP()
+                updateOLED()
                 
-            except: # Data unavailable - either connection error, or network error
+            except Exception as dataError: # Data unavailable - either connection error, or network error
                 try:
                     GPIO.output(Pins.DataErrLED, True) # Turn on flashing red data error light
-                except:
-                    pass
+                except Exception as error:
+                    print(error)
 
-                print("Error contacting weather.gov.", end = '')
+                print("Error contacting weather.gov. %s" % dataError)
                 if len(config["qpf"])>config["lookAhead"]:
                     print(" Using cached forecast data.")
                     display[2] = "Using cached data"
@@ -235,10 +274,18 @@ def CheckWeather():
                     config["time"] = time.time() - config["checkIncrement"] + 60
 
             # Now that we know current conditions and forecast, modify watering schedule
+            
             if rainForecasted != config["rainForecasted"]:
                 config["rainForecasted"] = rainForecasted
                 ModifyWatering(config["rainForecasted"])
+            elif config["valveHasSensor"] or config["forceValve"] or firstRun:
+                # Always try to move the valve if it has a sensor, force option is enabled, or first run
+                ModifyWatering(config["rainForecasted"])
             else:
+                if rainForecasted:
+                    display[3] = "Watering DISABLED"
+                else:
+                    display[3] = "Watering ENABLED"
                 print(display[3])
 
             # Store values in config file
@@ -250,14 +297,14 @@ def CheckWeather():
                 (config["checkIncrement"] / 60))
         else: # Things to do while waiting
             timeLeft = nextUpdate - time.time()
-            display[1] = "Next update: %i:%02i" % ((timeLeft/60), (timeLeft%60))
+            display[4] = "Next update: %i:%02i" % ((timeLeft/60), (timeLeft%60))
             time.sleep(0.1)
 
         # Update display
         updateOLED()
 
 def getCfgFile():
-    cfgName = "rain-bypass-2.cfg"
+    cfgName = "rain-bypass-3.cfg"
     
     try:  # If running from command line __file__ path is defined
         return os.path.dirname(os.path.abspath(__file__)) + "/" + cfgName
@@ -280,28 +327,33 @@ def loadConfig():
     config["checkIncrement"] = int(config["checkIncrement"])
     config["time"] = int(config["time"])
     config["rainForecasted"] = bool(config["rainForecasted"])
+    config["forceValve"] = (bool(config['forceValve'])) if ('forceValve' in config) else False
+    config["valveHasSensor"] = bool(config["valveHasSensor"])
     config["qpf"]
     elapsedTime = int(time.time()) - config["time"]
     print("Finished loading previous values.")
-    print("Last check was %.2f minutes ago." % (elapsedTime/60))    
-    incrementsToSkip = int(elapsedTime/config["checkIncrement"])
+    if config["time"] == 0: #config file was reset
+        config["time"] = time.time() - config["checkIncrement"]
+    else:
+        print("Last check was %.2f minutes ago." % (elapsedTime/60))    
+        incrementsToSkip = int(elapsedTime/config["checkIncrement"])
 
-    while incrementsToSkip > 0:
-        if len(config["qpf"]) > (config["lookAhead"] + 1):
-            print("Catching up...")
-            # Add first value in forecast to beginning of historical data
-            config["historicalRain"].insert(0,config["qpf"][0])
-            # Trim end of historical data
-            del config["historicalRain"][168:]
-            # Delete first entry from forecast, now that it's moved
-            del config["qpf"][:1]
-            # One less increment to skip needed
-            incrementsToSkip -= 1
-        else:
-            print("Insufficient cached data. Clearing stale historical data")
-            config["historicalRain"], config["qpf"] = [], []
-            incrementsToSkip = 0 
-            config["time"] = time.time() - config["checkIncrement"] + 60
+        while incrementsToSkip > 0:
+            if len(config["qpf"]) > (config["lookAhead"] + 1):
+                print("Catching up...")
+                # Add first value in forecast to beginning of historical data
+                config["historicalRain"].insert(0,config["qpf"][0])
+                # Trim end of historical data
+                del config["historicalRain"][168:]
+                # Delete first entry from forecast, now that it's moved
+                del config["qpf"][:1]
+                # One less increment to skip needed
+                incrementsToSkip -= 1
+            else:
+                print("Insufficient cached data. Clearing stale historical data")
+                config["historicalRain"], config["qpf"] = [], []
+                incrementsToSkip = 0 
+                config["time"] = time.time() - config["checkIncrement"] + 60
 
 def buildConfig():
     global config
@@ -319,6 +371,13 @@ def buildConfig():
 
     # input rainfall limit
     config["rainfallLimit"] = float(input("Enter rainfall amount that will disable watering, in inches/week: "))
+    
+    # use valve position sensor
+    config["valveHasSensor"] = ""
+    while config["valveHasSensor"].lower() != 'y' and config["valveHasSensor"].lower() != 'n':
+        config["valveHasSensor"] = str(input("Use position sensor on valve? ([y]es/[n]o) "))
+    config["valveHasSensor"] = (config["valveHasSensor"] == 'y')
+    config["forceValve"] = (bool(config['forceValve'])) if ('forceValve' in config) else False
 
     # request number of checks in 24 hour period
     # checkIncrement = int(input("Enter number of times you want to check forecast per 24-hour period " + \
@@ -330,10 +389,15 @@ def buildConfig():
     config["qpf"] = []
     config["historicalRain"] = []
 
+    # Create forecase placeholder
+    config["rainForecasted"] = False
+    
     # Save user input to new config file
-    config["time"] = int(time.time()) # Update timestamp
+    config["time"] = int(time.time()) - config["checkIncrement"] # Update timestamp
     with open(getCfgFile(),"w") as configFile:
         json.dump(config, configFile)
+        
+    PrintConfig()
 
 def processForecast(qpf):
     global config
@@ -367,13 +431,16 @@ def processForecast(qpf):
             (round(rainRate,3), config['rainfallLimit']))
         rainForecasted = False
     
-    display[4] = "%.1f in/wk rain fcst" % rainRate
+    display[2] = "%.1f in/wk rain fcst" % rainRate
     updateOLED()
     
     return rainForecasted
 
 def ModifyWatering(rainForecasted):
     global display
+    global firstRun
+    
+    firstRun = False
     
     oldLine4 = display[4]
     
@@ -392,13 +459,18 @@ def ModifyWatering(rainForecasted):
                 # wait for valve to open or 30 seconds to elapse
                 pass
             if GPIO.input(Pins.OpenSensor):
-                display[4] = "Valve opening FAILED"
-                print(display[4])
-                updateOLED()
+                if config["valveHasSensor"]:
+                    display[4] = "Valve opening FAILED"
+                    print(display[4])
+                    updateOLED()
+                else:
+                    display[4] = oldLine4
+                    updateOLED()
             else:
                 display[4] = oldLine4
-        except:
-            pass
+                updateOLED()
+        except Exception as error:
+            print(error)
     else:
         display[3] = "Watering DISABLED"
         display[4] = "Closing valve..."
@@ -414,19 +486,27 @@ def ModifyWatering(rainForecasted):
                 # wait for valve to open or 30 seconds to elapse
                 pass
             if GPIO.input(Pins.ClosedSensor):
-                display[4] = "Valve closing FAILED"
-                print(display[4])
-                updateOLED()
+                if config["valveHasSensor"]:
+                    display[4] = "Valve closing FAILED"
+                    print(display[4])
+                    updateOLED()
             else:
                 display[4] = oldLine4
-        except:
-            pass
+                updateOLED()
+        except Exception as error:
+            print(error)
 
     try:
         GPIO.output(Pins.OpenRelay, False) # Close both relays...
         GPIO.output(Pins.CloseRelay, False)  # before exiting
-    except:
-        pass
+    except Exception as error:
+        print(error)
+
+def getIP():
+    cmd = "hostname -I | cut -d\' \' -f1"
+    IP = subprocess.check_output(cmd, shell=True).decode("utf-8")
+    return IP
+
 
 def updateOLED():
     global display
@@ -445,8 +525,26 @@ def updateOLED():
         display[0].image(display[5])
         display[0].show()
 
-# Run setup
-runSetup()
+def shutdown(signum, frame):
+    global config
+    
+    print('SIGINT or CTRL-C detected. Exiting.')
+    with open(getCfgFile(),"w") as configFile:
+        json.dump(config, configFile)
+    GPIO.output(Pins.OpenRelay, False) 
+    GPIO.output(Pins.CloseRelay, False) 
+    GPIO.output(Pins.EnabledLED, False) 
+    GPIO.output(Pins.DisabledLED, False) 
+    display[1], display[2], display[3], display[4] = "", "", "", ""
+    updateOLED()
+    exit()
 
-# Init Forecast method
-CheckWeather()
+# Main program loop
+if __name__ == '__main__':
+    # Tell Python to run the shutdown() function when SIGINT (CTRL-C) is recieved
+    signal(SIGINT, shutdown)
+
+    # Run setup
+    runSetup()
+    # Init Forecast method
+    CheckWeather()
