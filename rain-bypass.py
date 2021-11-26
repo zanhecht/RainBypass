@@ -458,7 +458,7 @@ def ModifyWatering(rainForecasted):
             now = int(time.time())
             while (int(time.time()) < now + 30) and GPIO.input(Pins.OpenSensor):
                 # wait for valve to open or 30 seconds to elapse
-                pass
+                time.sleep(1)
             if GPIO.input(Pins.OpenSensor):
                 if config["valveHasSensor"]:
                     display[4] = "Valve opening FAILED"
@@ -485,7 +485,7 @@ def ModifyWatering(rainForecasted):
             now = int(time.time())
             while (int(time.time()) < now + 30) and GPIO.input(Pins.ClosedSensor):
                 # wait for valve to open or 30 seconds to elapse
-                pass
+                time.sleep(1)
             if GPIO.input(Pins.ClosedSensor):
                 if config["valveHasSensor"]:
                     display[4] = "Valve closing FAILED"
