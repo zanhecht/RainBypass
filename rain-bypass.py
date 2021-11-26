@@ -95,7 +95,7 @@ except Exception as error:
 
 config = {}             # Hold configuration
 display = [None, "","","","", None, None, None] # Hold display output
-firstRun = True
+firstRun = True # Always run valve on first run
 
 def runSetup():
     global config
@@ -147,7 +147,7 @@ def runSetup():
             updateOLED()
             time.sleep(30)
 
-    now, waitTime = time.time(), 0
+    now, waitTime = int(time.time()), 0
     # Load values from config file, or create it and get values
     try: # see if config file exists
         loadConfig()
@@ -159,7 +159,7 @@ def runSetup():
         
         ModifyWatering(config["rainForecasted"])
         
-        timeLeft = now + waitTime - time.time()
+        timeLeft = now + waitTime - int(time.time())
         display[4] = "Waiting %i:%02i mins" % ((timeLeft/60), (timeLeft%60))
         print(display[4])
     except Exception as configError: # Exception: config file does not exist, create new
@@ -171,10 +171,10 @@ def runSetup():
         display[3] = ""
         display[4] = ""
         
-    while time.time() < (now + waitTime):
+    while int(time.time()) < (now + waitTime):
         updateOLED()
-        time.sleep(0.1)
-        timeLeft = now + waitTime - time.time()
+        time.sleep(1)
+        timeLeft = now + waitTime - int(time.time())
         display[4] = "Waiting %i:%02i mins" % ((timeLeft/60), (timeLeft%60))
     
     display[4] = ""
@@ -203,7 +203,7 @@ def CheckWeather():
     while True: # Loop this forever
         # wait until next update interval
         nextUpdate = config["time"] + config["checkIncrement"]
-        if time.time() > nextUpdate: 
+        if int(time.time()) > nextUpdate: 
             rainForecasted = False # Does rain exceed limit - Boolean
             
             # display[1] = "Last update: " + time.strftime('%H:%M')
@@ -272,7 +272,7 @@ def CheckWeather():
                     display[2] = "Insufficient cache"
                     display[4] = ""
                     config["historicalRain"] = [] # Clearing historical data, since it is now inaccurate
-                    config["time"] = time.time() - config["checkIncrement"] + 60
+                    config["time"] = int(time.time()) - config["checkIncrement"] + 60
 
             # Now that we know current conditions and forecast, modify watering schedule
             
@@ -297,9 +297,9 @@ def CheckWeather():
             print("Checking forecast again in %i minute(s)" %
                 (config["checkIncrement"] / 60))
         else: # Things to do while waiting
-            timeLeft = nextUpdate - time.time()
+            timeLeft = nextUpdate - int(time.time())
             display[4] = "Next update: %i:%02i" % ((timeLeft/60), (timeLeft%60))
-            time.sleep(0.1)
+            time.sleep(1)
 
         # Update display
         updateOLED()
@@ -334,7 +334,7 @@ def loadConfig():
     elapsedTime = int(time.time()) - config["time"]
     print("Finished loading previous values.")
     if config["time"] == 0: #config file was reset
-        config["time"] = time.time() - config["checkIncrement"]
+        config["time"] = int(time.time()) - config["checkIncrement"]
     else:
         print("Last check was %.2f minutes ago." % (elapsedTime/60))    
         incrementsToSkip = int(elapsedTime/config["checkIncrement"])
@@ -354,7 +354,7 @@ def loadConfig():
                 print("Insufficient cached data. Clearing stale historical data")
                 config["historicalRain"], config["qpf"] = [], []
                 incrementsToSkip = 0 
-                config["time"] = time.time() - config["checkIncrement"] + 60
+                config["time"] = int(time.time()) - config["checkIncrement"] + 60
 
 def buildConfig():
     global config
@@ -455,8 +455,8 @@ def ModifyWatering(rainForecasted):
             GPIO.output(Pins.CloseRelay, False)  # enable watering
             GPIO.output(Pins.EnabledLED, True)  # Turn on green light
             GPIO.output(Pins.DisabledLED, False) # Turn off red light
-            now = time.time()
-            while (time.time() < now + 30) and GPIO.input(Pins.OpenSensor):
+            now = int(time.time())
+            while (int(time.time()) < now + 30) and GPIO.input(Pins.OpenSensor):
                 # wait for valve to open or 30 seconds to elapse
                 pass
             if GPIO.input(Pins.OpenSensor):
@@ -482,8 +482,8 @@ def ModifyWatering(rainForecasted):
             GPIO.output(Pins.CloseRelay, True)   # disable watering
             GPIO.output(Pins.EnabledLED, False) # Turn off green light
             GPIO.output(Pins.DisabledLED, True)  # Turn on red light
-            now = time.time()
-            while (time.time() < now + 30) and GPIO.input(Pins.ClosedSensor):
+            now = int(time.time())
+            while (int(time.time()) < now + 30) and GPIO.input(Pins.ClosedSensor):
                 # wait for valve to open or 30 seconds to elapse
                 pass
             if GPIO.input(Pins.ClosedSensor):
